@@ -1,13 +1,11 @@
 package main
 
 import (
-	"context"
-	"evm-chain-relayer/relayer"
+	"evm-chain-relayer/v2"
 	"fmt"
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"strings"
+	"time"
 )
 
 const cabi = "[\n\t{\n\t\t\"inputs\": [],\n\t\t\"name\": \"happen\",\n\t\t\"outputs\": [],\n\t\t\"stateMutability\": \"nonpayable\",\n\t\t\"type\": \"function\"\n\t},\n\t{\n\t\t\"anonymous\": false,\n\t\t\"inputs\": [\n\t\t\t{\n\t\t\t\t\"indexed\": true,\n\t\t\t\t\"internalType\": \"address\",\n\t\t\t\t\"name\": \"addr\",\n\t\t\t\t\"type\": \"address\"\n\t\t\t},\n\t\t\t{\n\t\t\t\t\"indexed\": false,\n\t\t\t\t\"internalType\": \"uint256\",\n\t\t\t\t\"name\": \"value\",\n\t\t\t\t\"type\": \"uint256\"\n\t\t\t}\n\t\t],\n\t\t\"name\": \"myemit\",\n\t\t\"type\": \"event\"\n\t},\n\t{\n\t\t\"inputs\": [],\n\t\t\"name\": \"value\",\n\t\t\"outputs\": [\n\t\t\t{\n\t\t\t\t\"internalType\": \"uint256\",\n\t\t\t\t\"name\": \"\",\n\t\t\t\t\"type\": \"uint256\"\n\t\t\t}\n\t\t],\n\t\t\"stateMutability\": \"view\",\n\t\t\"type\": \"function\"\n\t}\n]"
@@ -23,74 +21,83 @@ const passwd = "123"
 
 var w3qNativeContractAddr = common.HexToAddress("0x0000000000000000000000000000000003330002")
 
-func main() {
-	// initialize rinkeby chainOperator
-	rinkebyConfig := relayer.NewChainConfig(rinkebyRpcUrl, rinkebyRpcWsUrl, 3)
-	//relayerIn := relayer.NewRelayer("")
-	rinkebyOperator := relayer.NewChainOperator(rinkebyConfig, nil, context.Background())
-	if rinkebyOperator == nil {
-		panic("exec is nil")
-	}
-	json, err := abi.JSON(strings.NewReader(relayer.W3qERC20ABI))
-	if err != nil {
-		panic(err)
-	}
-	rinkebyOperator.RegisterContract(w3qERC20Addr, json)
-
-	// initialize web3q chainOperator
-	web3qRelayer, err := relayer.NewRelayerByKeyStore(web3QValKetStoreFilePath, passwd)
-	if err != nil {
-		panic(err)
-	}
-	web3QConfig := relayer.NewChainConfig(web3QRPCUrl, web3QRPCUrl, 3)
-	web3QOperator := relayer.NewChainOperator(web3QConfig, web3qRelayer, context.Background())
-	if rinkebyOperator == nil {
-		panic("exec is nil")
-	}
-	web3qNativeJson, err := abi.JSON(strings.NewReader(relayer.W3qNativeTestABI))
-	if err != nil {
-		panic(err)
-	}
-	web3QOperator.RegisterContract(w3qNativeContractAddr, web3qNativeJson)
-
-	// rinkebyChainOperator subscribe events
-	mintTaskIndex, err := rinkebyOperator.SubscribeEvent(w3qERC20Addr, "mintToken", nil)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println("mintTaskIndex:", mintTaskIndex)
-
-	burnTaskIndex, err := rinkebyOperator.SubscribeEvent(w3qERC20Addr, "burnToken", web3QOperator.MintNative(w3qNativeContractAddr, rinkebyOperator))
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println("burnTaskIndex:", burnTaskIndex)
-
-	//approvalTaskIndex, err := rinkebyOperator.SubscribeEvent(w3qERC20Addr, "Transfer", nil)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//fmt.Println("burnTaskIndex:", approvalTaskIndex)
-
-	//web3qChainOperator subscribe events
-	//w3qBurnIndex, err := web3QOperator.SubscribeEvent(w3qNativeContractAddr, "burnNativeToken", nil)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//fmt.Println("w3qBurnIndex:", w3qBurnIndex)
-	//w3qMintIndex, err := web3QOperator.SubscribeEvent(w3qNativeContractAddr, "mintNativeToken", nil)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//fmt.Println("w3qMintIndex:", w3qMintIndex)
-
-	rinkebyOperator.StartListening()
-	//web3QOperator.StartListening()
-}
+//func main1() {
+//	// initialize rinkeby chainOperator
+//	rinkebyConfig := relayer.NewChainConfig(rinkebyRpcUrl, rinkebyRpcWsUrl, 3)
+//	//relayerIn := relayer.NewRelayer("")
+//	rinkebyOperator := relayer.NewChainOperator(rinkebyConfig, nil, context.Background())
+//	if rinkebyOperator == nil {
+//		panic("exec is nil")
+//	}
+//	json, err := abi.JSON(strings.NewReader(relayer.W3qERC20ABI))
+//	if err != nil {
+//		panic(err)
+//	}
+//	rinkebyOperator.RegisterContract(w3qERC20Addr, json)
+//
+//	// initialize web3q chainOperator
+//	web3qRelayer, err := relayer.NewRelayerByKeyStore(web3QValKetStoreFilePath, passwd)
+//	if err != nil {
+//		panic(err)
+//	}
+//	web3QConfig := relayer.NewChainConfig(web3QRPCUrl, web3QRPCUrl, 3)
+//	web3QOperator := relayer.NewChainOperator(web3QConfig, web3qRelayer, context.Background())
+//	if rinkebyOperator == nil {
+//		panic("exec is nil")
+//	}
+//	web3qNativeJson, err := abi.JSON(strings.NewReader(relayer.W3qNativeTestABI))
+//	if err != nil {
+//		panic(err)
+//	}
+//	web3QOperator.RegisterContract(w3qNativeContractAddr, web3qNativeJson)
+//
+//	// rinkebyChainOperator subscribe events
+//	mintTaskIndex, err := rinkebyOperator.SubscribeEvent(w3qERC20Addr, "mintToken", nil)
+//	if err != nil {
+//		panic(err)
+//	}
+//	fmt.Println("mintTaskIndex:", mintTaskIndex)
+//
+//	burnTaskIndex, err := rinkebyOperator.SubscribeEvent(w3qERC20Addr, "burnToken", web3QOperator.MintNative(w3qNativeContractAddr, rinkebyOperator))
+//	if err != nil {
+//		panic(err)
+//	}
+//	fmt.Println("burnTaskIndex:", burnTaskIndex)
+//
+//	//approvalTaskIndex, err := rinkebyOperator.SubscribeEvent(w3qERC20Addr, "Transfer", nil)
+//	//if err != nil {
+//	//	panic(err)
+//	//}
+//	//fmt.Println("burnTaskIndex:", approvalTaskIndex)
+//
+//	//web3qChainOperator subscribe events
+//	//w3qBurnIndex, err := web3QOperator.SubscribeEvent(w3qNativeContractAddr, "burnNativeToken", nil)
+//	//if err != nil {
+//	//	panic(err)
+//	//}
+//	//fmt.Println("w3qBurnIndex:", w3qBurnIndex)
+//	//w3qMintIndex, err := web3QOperator.SubscribeEvent(w3qNativeContractAddr, "mintNativeToken", nil)
+//	//if err != nil {
+//	//	panic(err)
+//	//}
+//	//fmt.Println("w3qMintIndex:", w3qMintIndex)
+//
+//	rinkebyOperator.StartListening()
+//	//web3QOperator.StartListening()
+//}
 
 func printLog(log types.Log) {
 	fmt.Println("handle log")
 	fmt.Println("log topics", log.Topics[0], log.Topics[1])
 	fmt.Println("log data", log.Data)
+}
 
+func main() {
+	// 1. Monitor Subscription
+	//
+	go v2.GlobalCoordinator.Start()
+
+	time.Sleep(500 * time.Second)
+	//fmt.Println("Jumping")
+	//v2.GlobalCoordinator.Stop()
 }
