@@ -2,16 +2,12 @@ module evm-chain-relayer
 
 go 1.19
 
-require (
-	github.com/ethereum/go-ethereum v1.10.17
-	github.com/web3q v1.10.17
-)
+require github.com/ethereum/go-ethereum v1.10.17
 
 require (
 	github.com/StackExchange/wmi v1.2.1 // indirect
-	github.com/btcsuite/btcd/btcec/v2 v2.1.2 // indirect
+	github.com/btcsuite/btcd v0.22.0-beta // indirect
 	github.com/deckarep/golang-set v1.8.0 // indirect
-	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
@@ -27,5 +23,6 @@ require (
 	gopkg.in/natefinch/npipe.v2 v2.0.0-20160621034901-c1b8fa8bdcce // indirect
 )
 
-replace github.com/web3q v1.10.17 => ../Work/EthStorage/ExternalCall/go-ethereum
+//replace github.com/web3q v1.10.17 => ../Work/EthStorage/ExternalCall/go-ethereum
 //replace github.com/web3q v1.10.17 => github.com/QuarkChain/go-ethereum tm_w3q_bridge_adoption
+replace github.com/ethereum/go-ethereum v1.10.17 => github.com/QuarkChain/go-ethereum v1.9.23-0.20230321092345-0673454957e2

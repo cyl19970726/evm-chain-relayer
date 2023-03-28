@@ -9,9 +9,16 @@ import (
 )
 
 const (
-	TaskManagerNoStart = 0
-	TaskManagerDoing   = 1
-	TaskManagerStopped = 2
+	TaskManagerNoStart  = 0
+	TaskManagerDoing    = 1
+	TaskManagerStopping = 2
+	TaskManagerStopped  = 3
+)
+
+const (
+	MonitorTaskType = 0
+	SubmitTxTaskType
+	ScheduleTaskType
 )
 
 // send task to
@@ -48,7 +55,16 @@ func (manager *TaskManager) running() error {
 		return errors.New("TaskManager running with invalid status")
 	}
 
-	for _, mtask := range manager.mqueue {
+	for _, stask := range manager.scheduleQueue {
+		go func() {
+			err := stask.Start()
+			if err != nil {
+				panic(err)
+			}
+		}()
+	}
+
+	for _, mtask := range manager.monitorQueue {
 		err := GlobalCoordinator.SendTaskToRelayer(mtask)
 		if err != nil {
 			panic(err)
@@ -56,26 +72,36 @@ func (manager *TaskManager) running() error {
 		}
 	}
 
-	//for _, mtask := range manager.mqueue {
-	//	manager.wg.Add(1)
-	//	go func(taskManager *TaskManager, mt *MonitorTask) {
-	//		defer taskManager.wg.Done()
-	//		mt.StartMonitor()
-	//	}(manager, mtask)
-	//}
+	for _, ttask := range manager.txQueue {
+		go func() {
+			err := ttask.Start()
+			if err != nil {
+				panic(err)
+			}
+		}()
+	}
 
 	for {
 		select {
 		case <-manager.ctx.Done():
 			log.Info("TaskManager::running() TaskManager received stop-signal and will be done")
-			for _, mtask := range manager.mqueue {
-				if atomic.LoadUint32(&mtask.status) == MonitorTaskMonitoring {
+
+			for _, ttask := range manager.txQueue {
+				ttask.Stop()
+			}
+
+			for _, stask := range manager.scheduleQueue {
+				stask.Stop()
+			}
+
+			for _, mtask := range manager.monitorQueue {
+				if mtask.Status() == MonitorTaskMonitoring {
 					mtask.Stop()
 				}
 			}
 
 			manager.wg.Wait()
-			atomic.StoreUint32(&manager.status, TaskManagerStopped)
+			manager.SetStatus(TaskManagerStopped)
 			return nil
 		}
 	}
@@ -83,18 +109,28 @@ func (manager *TaskManager) running() error {
 }
 
 func (manager *TaskManager) Stop() error {
-	if atomic.LoadUint32(&manager.status) != TaskManagerDoing {
-		return errors.New("TaskManager stop with invalid status")
+	if manager.Status() == TaskManagerDoing {
+		manager.cancelFunc()
+		manager.SetStatus(TaskManagerStopping)
 	}
-	manager.cancelFunc()
+
+	return errors.New("TaskManager stop with invalid status")
 	return nil
 }
 
 func (manager *TaskManager) StopTaskBySpecificChainId(chainId uint64) {
-	for _, task := range manager.mqueue {
-		if task.TargetChainId() == chainId && atomic.LoadUint32(&task.status) == MonitorTaskMonitoring {
+	for _, task := range manager.monitorQueue {
+		if task.TargetChainId() == chainId && task.Status() == MonitorTaskMonitoring {
 			task.Stop()
 			// todo : move the stopped task to stopped-queue or vanish it
 		}
 	}
+}
+
+func (manager *TaskManager) Status() uint32 {
+	return atomic.LoadUint32(&manager.status)
+}
+
+func (manager *TaskManager) SetStatus(newStatus uint32) {
+	atomic.StoreUint32(&manager.status, newStatus)
 }

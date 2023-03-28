@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/ethereum/go-ethereum/ethclient"
-	web3qethclient "github.com/web3q/ethclient"
 )
 
 const (
@@ -16,7 +15,7 @@ const (
 
 type IChainRelayer interface {
 	ChainId() uint64
-	SendMonitorTask(task *MonitorTask) error
+	SendMonitorTask(task IMonitorTask) error
 	Start() error
 	Running() error
 	Stop() error
@@ -26,8 +25,8 @@ type IChainClient interface {
 	ChainId() uint64
 	EthWsClient() *ethclient.Client
 	EthHttpClient() *ethclient.Client
-	Web3qWsClient() *web3qethclient.Client
-	Web3qHttpClient() *web3qethclient.Client
+	Web3qWsClient() *ethclient.Client
+	Web3qHttpClient() *ethclient.Client
 }
 type EthChainClient struct {
 	chainId    uint64
@@ -47,11 +46,11 @@ func (e *EthChainClient) EthHttpClient() *ethclient.Client {
 	return e.httpClient
 }
 
-func (e *EthChainClient) Web3qWsClient() *web3qethclient.Client {
+func (e *EthChainClient) Web3qWsClient() *ethclient.Client {
 	panic("EthChainClient no implement w3qClient interface")
 }
 
-func (e *EthChainClient) Web3qHttpClient() *web3qethclient.Client {
+func (e *EthChainClient) Web3qHttpClient() *ethclient.Client {
 	panic("EthChainClient no implement w3qClient interface")
 }
 
@@ -62,8 +61,8 @@ func (c *EthChainClient) Close() {
 
 type Web3qChainClient struct {
 	chainId    uint64
-	wsClient   *web3qethclient.Client
-	httpClient *web3qethclient.Client
+	wsClient   *ethclient.Client
+	httpClient *ethclient.Client
 }
 
 func (e *Web3qChainClient) ChainId() uint64 {
@@ -78,11 +77,11 @@ func (w *Web3qChainClient) EthHttpClient() *ethclient.Client {
 	panic("Web3qChainClient no implement EthChainClient interface")
 }
 
-func (w *Web3qChainClient) Web3qWsClient() *web3qethclient.Client {
+func (w *Web3qChainClient) Web3qWsClient() *ethclient.Client {
 	return w.wsClient
 }
 
-func (w *Web3qChainClient) Web3qHttpClient() *web3qethclient.Client {
+func (w *Web3qChainClient) Web3qHttpClient() *ethclient.Client {
 	return w.httpClient
 }
 
@@ -134,17 +133,17 @@ func NewW3qChainClient(httpUrl, wsUrl string, ctx context.Context) (*Web3qChainC
 		return nil, errors.New("httpUrl and wsUrl are empty")
 	}
 
-	var httpClient, wsClient *web3qethclient.Client
+	var httpClient, wsClient *ethclient.Client
 	var err error
 	if httpUrl != "" {
-		httpClient, err = web3qethclient.DialContext(ctx, httpUrl)
+		httpClient, err = ethclient.DialContext(ctx, httpUrl)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	if wsUrl != "" {
-		wsClient, err = web3qethclient.DialContext(ctx, wsUrl)
+		wsClient, err = ethclient.DialContext(ctx, wsUrl)
 		if err != nil {
 			return nil, err
 		}

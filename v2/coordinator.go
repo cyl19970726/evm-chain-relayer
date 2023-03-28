@@ -20,20 +20,40 @@ var GlobalCoordinator *Coordinator
 func init() {
 	initContractConf()
 	GlobalCoordinator = NewCoordinator(4)
-	//web3qRelayer, err := NewChainRelayer("/Users/chenyanlong/Work/go-ethereum/cmd/geth/data_val_0/keystore/UTC--2022-06-07T04-15-42.696295000Z--96f22a48dcd4dfb99a11560b24bee02f374ca77d", "123", Web3qChainConf)
-	//if err != nil {
-	//	panic(err)
-	//}
-
-	ethRelayer, err := NewEthChainRelayer(GlobalCoordinator.ctx, "/Users/chenyanlong/Work/go-ethereum/cmd/geth/data_val_0/keystore/UTC--2022-06-07T04-15-42.696295000Z--96f22a48dcd4dfb99a11560b24bee02f374ca77d", "123", EthereumChainConf)
+	web3qRelayer, err := NewEthChainRelayer(
+		GlobalCoordinator.ctx,
+		"/Users/chenyanlong/Work/go-ethereum/cmd/geth/data_val_0/keystore/UTC--2022-06-07T04-15-42.696295000Z--96f22a48dcd4dfb99a11560b24bee02f374ca77d",
+		"123",
+		Web3qChainConf,
+	)
 	if err != nil {
 		panic(err)
 	}
 
-	//GlobalCoordinator.AddChainRelayer(web3qRelayer)
+	ethRelayer, err := NewEthChainRelayer(
+		GlobalCoordinator.ctx,
+		"/Users/chenyanlong/Work/go-ethereum/cmd/geth/data_val_0/keystore/UTC--2022-06-07T04-15-42.696295000Z--96f22a48dcd4dfb99a11560b24bee02f374ca77d",
+		"123",
+		EthereumChainConf,
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	GlobalCoordinator.AddChainRelayer(web3qRelayer)
 	GlobalCoordinator.AddChainRelayer(ethRelayer)
 
+	_, err = NewScheduleTaskFromW3qToEth("Schedule task to exec tx on ethereum", GlobalCoordinator.taskManager)
+	if err != nil {
+		panic(err)
+	}
+
 	eventMonitorTask := GlobalCoordinator.taskManager.GenMonitorEventTask(EthereumChainConf.chainId, EthereumChainConf.bridgeAddr, "sendToken")
+	stx := GlobalCoordinator.taskManager.GenReceiveToken_SubmitTxTask_OnWeb3q()
+	err = eventMonitorTask.SubscribeData(stx.receiveCh)
+	if err != nil {
+		panic(err)
+	}
 	GlobalCoordinator.AddTaskIntoTaskPool(eventMonitorTask)
 
 }
@@ -118,6 +138,10 @@ func (c *Coordinator) Running() error {
 	return nil
 }
 
+func (c *Coordinator) GetRelayer(chainId uint64) IChainRelayer {
+	return c.relayers[chainId]
+}
+
 func (c *Coordinator) Stop() {
 	log.Info("Coordinator::Stop() coordinator send stop-signal")
 	c.cancelFunc()
@@ -125,7 +149,7 @@ func (c *Coordinator) Stop() {
 }
 
 // SendTaskToRelayer will be invoked by taskManager
-func (c *Coordinator) SendTaskToRelayer(task *MonitorTask) error {
+func (c *Coordinator) SendTaskToRelayer(task IMonitorTask) error {
 	relayer := c.relayers[task.TargetChainId()]
 	if relayer == nil {
 		return fmt.Errorf("the chain-relayer corresponding to the task-chainId [%d] no exists", task.TargetChainId())
@@ -142,6 +166,7 @@ func (c *Coordinator) removeChainRelayer() {
 
 }
 
-func (c *Coordinator) AddTaskIntoTaskPool(task *MonitorTask) {
+func (c *Coordinator) AddTaskIntoTaskPool(task Task) {
+	switch task.Name()
 	c.taskManager.AddMonitorTask(task)
 }

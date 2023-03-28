@@ -34,7 +34,7 @@ type EthChainRelayer struct {
 	relayerdb *leveldb.Database
 
 	recExecTaskCh    chan Task
-	recMonitorTaskCh chan *MonitorTask
+	recMonitorTaskCh chan IMonitorTask
 	//mtQueue          []MonitorTask
 
 	status uint32
@@ -75,7 +75,7 @@ func NewEthChainRelayer(pctx context.Context, filepath string, passwd string, co
 		ctx:              ctx,
 		cancel:           cf,
 		status:           0,
-		recMonitorTaskCh: make(chan *MonitorTask),
+		recMonitorTaskCh: make(chan IMonitorTask),
 		recExecTaskCh:    make(chan Task),
 	}
 
@@ -170,8 +170,44 @@ func (c *EthChainRelayer) estimateGas(tx *types.DynamicFeeTx) (uint64, error) {
 	return gasLimit, nil
 }
 
-func (c *EthChainRelayer) GenTx(task *ExecTask, args ...interface{}) (*types.Transaction, error) {
+func (c *EthChainRelayer) GenTx(task *SubmitTxTask, args ...interface{}) (*types.Transaction, error) {
 	abi := GlobalContractInfo.GetContractAbi(c.ChainId(), task.contractAddr)
+	txdata, err := abi.Pack(task.methodName, args)
+	if err != nil {
+		return nil, err
+	}
+
+	tx := &types.DynamicFeeTx{
+		To:    &task.contractAddr,
+		Data:  txdata,
+		Value: big.NewInt(0),
+	}
+
+	gasLimit, err := c.estimateGas(tx)
+	if err != nil {
+		return nil, err
+	}
+
+	gasTipCap, gasFeeCap, err := c.suggestGasPrice()
+	if err != nil {
+		return nil, err
+	}
+
+	nonce, err := c.getNonce()
+	if err != nil {
+		return nil, err
+	}
+
+	tx.Gas = gasLimit
+	tx.Nonce = nonce
+	tx.GasTipCap = gasTipCap
+	tx.GasFeeCap = gasFeeCap
+
+	return types.NewTx(tx), nil
+}
+
+func (c *EthChainRelayer) GenTx1(task *SubmitTxTask, args ...interface{}) (*types.Transaction, error) {
+	abi := GlobalContractsCfg.GetContractAbi(task.contractName)
 	txdata, err := abi.Pack(task.methodName, args)
 	if err != nil {
 		return nil, err
@@ -228,6 +264,11 @@ func (c *EthChainRelayer) GetBlockHeader(number *big.Int) (*types.Header, error)
 	return header, err
 }
 
+func (c *EthChainRelayer) GetReceiptProof(txhash common.Hash) (*ethclient.ReceiptProofData, error) {
+	proof, err := c.wsClient().ReceiptProof(c.ctx, txhash)
+	return proof, err
+}
+
 func (c *EthChainRelayer) CallContract(contractName string, methodName string, args ...interface{}) ([]byte, error) {
 
 	contractInfo := GlobalContractsCfg.GetContract(contractName)
@@ -247,7 +288,7 @@ func (c *EthChainRelayer) CallContract(contractName string, methodName string, a
 		Data:  packData,
 	}
 
-	res, err := c.httpClient().CallContract(c.ctx, msg, nil)
+	res, err := c.wsClient().CallContract(c.ctx, msg, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -269,24 +310,24 @@ func (c *EthChainRelayer) IsW3qHeaderExistAtLightClient(web3qHeadrNumber *big.In
 	}
 }
 
-func (c *EthChainRelayer) checkTaskValidity(task *MonitorTask) error {
+func (c *EthChainRelayer) checkTaskValidity(task IMonitorTask) error {
 	if task.TargetChainId() != c.ChainId() {
 		log.Error("receive task with invalid chainId", "expect chainId", c.ChainId(), "actual chainId", task.TargetChainId())
 		return fmt.Errorf("invalid chainId [%d]", task.TargetChainId())
 	}
 
-	if task.MonitorFunc == nil {
+	if task.GetMonitorFunc() == nil {
 		return errors.New("task.MonitorFunc is empty")
 	}
 
-	if atomic.LoadUint32(&task.status) != MonitorTaskNoStart {
-		return fmt.Errorf("task with invalid status [%d]", atomic.LoadUint32(&task.status))
+	if task.Status() != MonitorTaskNoStart {
+		return fmt.Errorf("task with invalid status [%d]", task.Status())
 	}
 
 	return nil
 }
 
-func (c *EthChainRelayer) SendMonitorTask(task *MonitorTask) error {
+func (c *EthChainRelayer) SendMonitorTask(task IMonitorTask) error {
 	err := c.checkTaskValidity(task)
 	if err != nil {
 		return err
@@ -323,7 +364,7 @@ func (c *EthChainRelayer) Running() error {
 				continue
 			}
 
-			err := task.MonitorFunc(c)
+			err := task.ExecMonitorFunc(c)
 			if err != nil {
 				log.Error("EthChainRelayer::Running() failed to execute task.MonitorFunc()", "chainId", c.ChainId(), "err", err.Error())
 				continue

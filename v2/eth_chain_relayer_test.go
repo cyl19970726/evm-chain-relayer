@@ -13,6 +13,8 @@ func TestEthChainRelayer_IsW3qHeaderExistAtLightClient(t *testing.T) {
 	//}
 
 	ethRelayer := GlobalCoordinator.relayers[5].(*EthChainRelayer)
+	// todo : check big.Int or uint64 is valid
+	// both wsClient and http client validity
 	res, err := ethRelayer.IsW3qHeaderExistAtLightClient(big.NewInt(0))
 	if err != nil {
 		t.Fatal(err)

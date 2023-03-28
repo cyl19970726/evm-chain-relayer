@@ -9,7 +9,7 @@ var (
 		chainId:    3333,
 		httpRpc:    "",
 		wssRpc:     "",
-		bridgeAddr: common.HexToAddress("0x0000000000000000000000000000000003330001"),
+		bridgeAddr: common.HexToAddress("0x0000000000000000000000000000000003330002"),
 	}
 
 	EthereumChainConf = &ChainConfig{

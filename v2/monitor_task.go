@@ -13,14 +13,27 @@ import (
 const (
 	MonitorTaskNoStart    = 0
 	MonitorTaskMonitoring = 1
-	MonitorTaskStopped    = 2
+	MonitorTaskStopping   = 2
+	MonitorTaskStopped    = 3
 )
+
+type IMonitorTask interface {
+	Name() string
+	Status() uint32
+	TargetChainId() uint64
+	GetMonitorFunc() func(c IChainRelayer) (err error)
+	ExecMonitorFunc(c IChainRelayer) error
+	StartMonitor() error
+	Stop() error
+}
 
 type MonitorTask struct {
 	targetChainId uint64
 	contractAddr  common.Address
 	eventName     string
 	eventId       common.Hash
+
+	sendDataCh chan *types.Log
 
 	MonitorFunc func(c IChainRelayer) (err error)
 	recCh       chan types.Log
@@ -33,9 +46,8 @@ type MonitorTask struct {
 	pwg sync.WaitGroup
 }
 
-func NewMonitorTask(pwg sync.WaitGroup, targetChainId uint64, contractAddr common.Address, eventName string, eventId common.Hash) *MonitorTask {
+func NewMonitorEventTask(pwg sync.WaitGroup, targetChainId uint64, contractAddr common.Address, eventName string, eventId common.Hash) *MonitorTask {
 	return &MonitorTask{
-
 		targetChainId: targetChainId,
 		contractAddr:  contractAddr,
 		eventName:     eventName,
@@ -48,12 +60,28 @@ func NewMonitorTask(pwg sync.WaitGroup, targetChainId uint64, contractAddr commo
 	}
 }
 
+func (task *MonitorTask) SubscribeData(sendDataCh chan *types.Log) error {
+	if task.sendDataCh != nil {
+		return fmt.Errorf("%s MonitorTask has been subscribed", task.Name())
+	}
+	task.sendDataCh = sendDataCh
+	return nil
+}
+
 func (task *MonitorTask) Name() string {
 	return "MonitorTask"
 }
 
 func (task *MonitorTask) TargetChainId() uint64 {
 	return task.targetChainId
+}
+
+func (task *MonitorTask) GetMonitorFunc() func(c IChainRelayer) (err error) {
+	return task.MonitorFunc
+}
+
+func (task *MonitorTask) ExecMonitorFunc(c IChainRelayer) error {
+	return task.MonitorFunc(c)
 }
 
 func (task *MonitorTask) StartMonitor() error {
@@ -67,21 +95,15 @@ func (task *MonitorTask) StartMonitor() error {
 	atomic.StoreUint32(&task.status, MonitorTaskMonitoring)
 
 	log.Info("MonitorTask::StartMonitor() succeed to start the monitor-contract-event task", "chainId", task.TargetChainId(), "contract", task.contractAddr, "event", task.eventName)
-	task.Monitoring()
+	task.monitoring()
 	return nil
 }
 
-func (task *MonitorTask) Monitoring() {
+func (task *MonitorTask) monitoring() {
 
 	if atomic.LoadUint32(&task.status) != MonitorTaskMonitoring {
 		log.Error("monitoring with invalid status", "task-status", atomic.LoadUint32(&task.status), "chainId", task.TargetChainId(), "contract", task.contractAddr, "event", task.eventName)
 	}
-
-	//err := <-task.errCh
-	//if err != nil {
-	//	log.Error("MonitorTask::StartMonitor() monitor-contract-event task happened error", "chainId", task.TargetChainId(), "contract", task.contractAddr, "event", task.eventName, "err", err.Error())
-	//	return
-	//}
 
 	log.Info("MonitorTask::Monitoring() running the monitor-contract-event task", "chainId", task.TargetChainId(), "contract", task.contractAddr, "event", task.eventName)
 
@@ -95,8 +117,10 @@ func (task *MonitorTask) Monitoring() {
 			}
 		case data := <-task.recCh:
 			log.Info("MonitorTask::Monitoring() receive event log", "chainId", task.targetChainId, "event", task.eventName, "Address", data.Topics[0].Hex(), "topics", data.Topics[1:])
-			// todo: next process of log data
-			// todo: execTask can add a subscription into MonitorTask
+			if task.sendDataCh != nil {
+				log.Info("MonitorTask::Monitoring() sending data to next processing program", "chainId", task.targetChainId, "event", task.eventName, "Address", data.Topics[0].Hex(), "topics", data.Topics[1:])
+				task.sendDataCh <- &data
+			}
 		case err := <-task.sub.Err():
 			task.errCh <- err
 
@@ -106,26 +130,36 @@ func (task *MonitorTask) Monitoring() {
 			//close(task.errCh)
 			//close(task.recCh)
 			//close(task.cancelCh)
+			task.SetStatus(MonitorTaskStopped)
 			return
 		}
 	}
 }
 
-func (task *MonitorTask) Stop() {
+func (task *MonitorTask) Stop() error {
 	log.Info("MonitorTask::Stop() send the stop-signal to the monitor-contract-event task ", "chainId", task.TargetChainId(), "contract", task.contractAddr, "event", task.eventName)
 	if atomic.LoadUint32(&task.status) == MonitorTaskMonitoring {
 		task.cancelCh <- struct{}{}
-		atomic.StoreUint32(&task.status, MonitorTaskStopped)
-	} else {
-		log.Error("failed to stop the monitor-contract-event task execution", "task-status", atomic.LoadUint32(&task.status), "chainId", task.TargetChainId(), "contract", task.contractAddr, "event", task.eventName)
+		task.SetStatus(MonitorTaskStopping)
+		return nil
 	}
 
+	return fmt.Errorf("MonitorTask::Stop() failed to stop the monitor-contract-event task execution")
+
+}
+
+func (task *MonitorTask) Status() uint32 {
+	return atomic.LoadUint32(&task.status)
+}
+
+func (task *MonitorTask) SetStatus(newStatus uint32) {
+	atomic.StoreUint32(&task.status, newStatus)
 }
 
 func (manager *TaskManager) GenMonitorEventTask(targetChainId uint64, address common.Address, eventName string) *MonitorTask {
 	eventId := GlobalContractInfo.GetContractEventId(targetChainId, address, eventName)
 	// todo: how to judge the eventId validity
-	task := NewMonitorTask(manager.wg, targetChainId, address, eventName, eventId)
+	task := NewMonitorEventTask(manager.wg, targetChainId, address, eventName, eventId)
 	ef := func(c IChainRelayer) (err error) {
 		task.sub, err = c.(*EthChainRelayer).SubscribeEvent(address, eventId, task.recCh)
 		return err
