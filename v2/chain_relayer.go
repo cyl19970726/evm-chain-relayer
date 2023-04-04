@@ -17,7 +17,6 @@ type IChainRelayer interface {
 	ChainId() uint64
 	SendMonitorTask(task IMonitorTask) error
 	Start() error
-	Running() error
 	Stop() error
 }
 
@@ -92,7 +91,7 @@ func (c *Web3qChainClient) Close() {
 
 func NewEthChainClient(httpUrl, wsUrl string, ctx context.Context) (*EthChainClient, error) {
 
-	if httpUrl == "" && wsUrl == "" {
+	if httpUrl == "" || wsUrl == "" {
 		return nil, errors.New("httpUrl and wsUrl are empty")
 	}
 
@@ -108,6 +107,7 @@ func NewEthChainClient(httpUrl, wsUrl string, ctx context.Context) (*EthChainCli
 	if wsUrl != "" {
 		wsClient, err = ethclient.DialContext(ctx, wsUrl)
 		if err != nil {
+			panic(err)
 			return nil, err
 		}
 	}

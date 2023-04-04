@@ -19,7 +19,7 @@ var GlobalCoordinator *Coordinator
 
 func init() {
 	initContractConf()
-	GlobalCoordinator = NewCoordinator(4)
+	GlobalCoordinator = NewCoordinator(3)
 	web3qRelayer, err := NewEthChainRelayer(
 		GlobalCoordinator.ctx,
 		"/Users/chenyanlong/Work/go-ethereum/cmd/geth/data_val_0/keystore/UTC--2022-06-07T04-15-42.696295000Z--96f22a48dcd4dfb99a11560b24bee02f374ca77d",
@@ -48,13 +48,18 @@ func init() {
 		panic(err)
 	}
 
-	eventMonitorTask := GlobalCoordinator.taskManager.GenMonitorEventTask(EthereumChainConf.chainId, EthereumChainConf.bridgeAddr, "sendToken")
-	stx := GlobalCoordinator.taskManager.GenReceiveToken_SubmitTxTask_OnWeb3q()
-	err = eventMonitorTask.SubscribeData(stx.receiveCh)
-	if err != nil {
-		panic(err)
-	}
-	GlobalCoordinator.AddTaskIntoTaskPool(eventMonitorTask)
+	//eventMonitorTask := GlobalCoordinator.taskManager.GenMonitorEventTask(
+	//	EthereumChainConf.chainId,
+	//	EthereumChainConf.bridgeAddr,
+	//	ETHEventSendTokenName,
+	//)
+	//stx := GlobalCoordinator.taskManager.GenReceiveToken_SubmitTxTask_OnWeb3q()
+	//err = eventMonitorTask.SubscribeData(stx.receiveCh)
+	//if err != nil {
+	//	panic(err)
+	//}
+	//GlobalCoordinator.AddTaskIntoTaskPool(eventMonitorTask)
+	//GlobalCoordinator.AddTaskIntoTaskPool(stx)
 
 }
 
@@ -91,25 +96,25 @@ func (c *Coordinator) Start() error {
 		return fmt.Errorf("Coordinator::Start() with invalid status [%d]", atomic.LoadUint32(&c.status))
 	}
 	atomic.StoreUint32(&c.status, CoordinatorDoing)
-	return c.Running()
+	return c.running()
 }
 
-func (c *Coordinator) Running() error {
+func (c *Coordinator) running() error {
 	if atomic.LoadUint32(&c.status) != CoordinatorDoing {
 		return fmt.Errorf("Coordinator::Running() with invalid status [%d]", atomic.LoadUint32(&c.status))
 	}
 
 	for _, relayer := range c.relayers {
 		c.wg.Add(1)
-		go func(c *Coordinator) {
+		go func(c *Coordinator, chainRelayer IChainRelayer) {
 			defer c.wg.Done()
-			err := relayer.Start()
+			err := chainRelayer.Start()
 			if err != nil {
-				log.Error("Coordinator::Start() failed to start relayer", "chainId", relayer.ChainId(), "err", err.Error())
+				log.Error("Coordinator::running() failed to start relayer", "chainId", relayer.ChainId(), "err", err.Error())
 				c.errCh <- err
 				return
 			}
-		}(c)
+		}(c, relayer)
 	}
 
 	c.wg.Add(1)
@@ -117,7 +122,7 @@ func (c *Coordinator) Running() error {
 		defer c.wg.Done()
 		err := c.taskManager.Start()
 		if err != nil {
-			log.Error("Coordinator::Start() failed to start taskManager", "err", err.Error())
+			log.Error("Coordinator::running() failed to start taskManager", "err", err.Error())
 			c.errCh <- err
 			return
 		}
@@ -130,7 +135,7 @@ func (c *Coordinator) Running() error {
 				c.Stop()
 			}
 		case <-c.ctx.Done():
-			log.Info("Coordinator::Running() coordinator receive stop-signal and will be done")
+			log.Info("Coordinator::running() coordinator receive stop-signal and will be done")
 			atomic.StoreUint32(&c.status, CoordinatorStopped)
 			return nil
 		}
@@ -167,6 +172,22 @@ func (c *Coordinator) removeChainRelayer() {
 }
 
 func (c *Coordinator) AddTaskIntoTaskPool(task Task) {
-	switch task.Name()
-	c.taskManager.AddMonitorTask(task)
+	switch task.Type() {
+	case MonitorTaskType:
+		mtask := task.(IMonitorTask)
+		c.taskManager.AddMonitorTask(mtask)
+	case MonitorHeaderTaskType:
+		mtask := task.(IMonitorTask)
+		c.taskManager.AddMonitorTask(mtask)
+	case SubmitTxTaskType:
+		stask := task.(*SubmitTxTask)
+		c.taskManager.AddSubmitTxTask(stask)
+	case ScheduleTaskType:
+		stask := task.(*ScheduleTask)
+		c.taskManager.AddScheduleTask(stask)
+	default:
+		log.Error("Coordinator::AddTaskIntoTaskPool() add task with invalid type", "task-type", task.Type(), "task-name", task.Name())
+		return
+	}
+
 }

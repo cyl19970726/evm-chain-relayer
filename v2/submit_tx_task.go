@@ -6,6 +6,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
+	"math/big"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,6 +21,7 @@ const (
 
 type (
 	SubmitTxTask struct {
+		sourceChainId uint64
 		targetChainId uint64
 		contractAddr  common.Address
 		contractName  string
@@ -27,7 +29,7 @@ type (
 
 		status uint32
 
-		submitTxFunc func(c *EthChainRelayer, value interface{}, task *SubmitTxTask) error
+		submitTxFunc func(source *EthChainRelayer, target *EthChainRelayer, value interface{}, task *SubmitTxTask) (*types.Transaction, error)
 
 		pwg       sync.WaitGroup
 		receiveCh chan interface{}
@@ -35,17 +37,22 @@ type (
 	}
 )
 
-func NewSubmitTxTask(caddr common.Address, cName, mName string, targetChainId uint64, pwg sync.WaitGroup) *SubmitTxTask {
+func NewSubmitTxTask(caddr common.Address, cName, mName string, sourceChainId uint64, targetChainId uint64, pwg sync.WaitGroup) *SubmitTxTask {
 	return &SubmitTxTask{
 		contractAddr:  caddr,
 		contractName:  cName,
 		methodName:    mName,
 		status:        SubmitTxTaskNoStart,
+		sourceChainId: sourceChainId,
 		targetChainId: targetChainId,
 		receiveCh:     make(chan interface{}),
 		cancelCh:      make(chan struct{}),
 		pwg:           pwg,
 	}
+}
+
+func (st *SubmitTxTask) Type() uint32 {
+	return SubmitTxTaskType
 }
 
 func (et *SubmitTxTask) Name() string {
@@ -68,13 +75,25 @@ func (et *SubmitTxTask) running() error {
 		select {
 		case data := <-et.receiveCh:
 			//err := et.execFunc(data)
-			r := GlobalCoordinator.GetRelayer(et.targetChainId).(*EthChainRelayer)
-			if r == nil {
+			sr := GlobalCoordinator.GetRelayer(et.sourceChainId).(*EthChainRelayer)
+			tr := GlobalCoordinator.GetRelayer(et.targetChainId).(*EthChainRelayer)
+			if sr == nil {
+				return fmt.Errorf("chainRelayer %d no exist", et.sourceChainId)
+			}
+			if tr == nil {
 				return fmt.Errorf("chainRelayer %d no exist", et.targetChainId)
 			}
-			err := et.submitTxFunc(r, data, et)
+
+			tx, err := et.submitTxFunc(sr, tr, data, et)
 			// todo : how to deal failed tx
-			log.Error("SubmitTxTask::running() failed to submitTx", "chainId", et.TargetChainId(), "methodName", et.methodName, "error", err.Error())
+			if err != nil {
+				log.Error("SubmitTxTask::running() failed to submitTx", "chainId", et.TargetChainId(), "methodName", et.methodName, "error", err.Error())
+				fmt.Printf("tx: %v", *tx)
+				continue
+			}
+
+			log.Info("SubmitTxTask::running() succeed to submitTx", "chainId", et.TargetChainId(), "txhash", tx.Hash(), "methodName", et.methodName)
+
 		case <-et.cancelCh:
 			et.SetStatus(SubmitTxTaskStopped)
 			return nil
@@ -106,27 +125,40 @@ func (task *SubmitTxTask) SetStatus(newStatus uint32) {
 	atomic.StoreUint32(&task.status, newStatus)
 }
 
+type Proof struct {
+	Value     []byte
+	ProofPath []byte
+	HpKey     []byte
+}
+
 func (manager *TaskManager) GenReceiveToken_SubmitTxTask_OnEth() *SubmitTxTask {
-	task := NewSubmitTxTask(EthereumChainConf.bridgeAddr, LightClientContract, receiveFromWeb3qFunc, EthereumChainConf.chainId, manager.wg)
-	ef := func(c *EthChainRelayer, value interface{}, task *SubmitTxTask) error {
+	task := NewSubmitTxTask(EthereumChainConf.bridgeAddr, EthereumBridgeContract, receiveFromWeb3qFunc, Web3qChainConf.chainId, EthereumChainConf.chainId, manager.wg)
+	ef := func(source *EthChainRelayer, target *EthChainRelayer, value interface{}, task *SubmitTxTask) (*types.Transaction, error) {
 		log := value.(*types.Log)
 		// 4. get receipt_proof from web3q
-		proof, err := c.GetReceiptProof(log.TxHash)
+		proof, err := source.GetReceiptProof(log.TxHash)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		// todo : check big.Int or uint63 is valid
-		tx, err := c.GenTx(task, log.BlockNumber, proof, log.Index)
-		if err != nil {
-			return err
-		}
-		err = c.SubmitTx(tx)
-		if err != nil {
-			return err
+		p := &Proof{
+			Value:     proof.ReceiptValue,
+			ProofPath: proof.ReceiptValue,
+			HpKey:     proof.ReceiptKey,
 		}
 
-		return nil
+		logIndex := big.NewInt(0).SetUint64(uint64(log.Index))
+		fmt.Printf("===%d ==== %d====", log.Index, logIndex.Uint64())
+		tx, err := target.GenTx(task, big.NewInt(0).SetUint64(log.BlockNumber), p, logIndex)
+		if err != nil {
+			return tx, err
+		}
+		err = target.SubmitTx(tx)
+		if err != nil {
+			return tx, err
+		}
+
+		return tx, nil
 	}
 
 	task.submitTxFunc = ef
@@ -134,60 +166,69 @@ func (manager *TaskManager) GenReceiveToken_SubmitTxTask_OnEth() *SubmitTxTask {
 }
 
 func (manager *TaskManager) GenSubmitWeb3qHeader_SubmitTxTask_OnEth() *SubmitTxTask {
-	task := NewSubmitTxTask(EthereumChainConf.lightClientAddr, LightClientContract, receiveFromWeb3qFunc, EthereumChainConf.chainId, manager.wg)
-	ef := func(c *EthChainRelayer, value interface{}, task *SubmitTxTask) error {
+	task := NewSubmitTxTask(EthereumChainConf.lightClientAddr, LightClientContract, SubmitHeaderFunc, Web3qChainConf.chainId, EthereumChainConf.chainId, manager.wg)
+	ef := func(source *EthChainRelayer, target *EthChainRelayer, value interface{}, task *SubmitTxTask) (*types.Transaction, error) {
 		web3qHeader := value.(*types.Header)
 
 		//3. submit Header to Ethereum
 		eHeader, eCommit, err := PackedWeb3qHeader(web3qHeader)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		// todo: getNonce
 
-		tx, err := c.GenTx(task, web3qHeader.Number, eHeader, eCommit, false)
+		tx, err := target.GenTx(task, web3qHeader.Number, eHeader, eCommit, false)
 		if err != nil {
-			return err
+			return tx, err
 		}
 
-		err = c.SubmitTx(tx)
+		err = target.SubmitTx(tx)
 		if err != nil {
-			return err
+			return tx, err
 		}
 
 		// todo : set the current txHash for exec_task , and track the tx
 
-		return nil
+		return tx, nil
 	}
 
 	task.submitTxFunc = ef
 	return task
 }
 
-const CONFIRMS = 10
+const CONFIRMS = 2
 const BlockInternalSecond = 10
+const RetryTimes = 3
 
 func (manager *TaskManager) GenReceiveToken_SubmitTxTask_OnWeb3q() *SubmitTxTask {
-	task := NewSubmitTxTask(Web3qChainConf.bridgeAddr, Web3qBridgeContract, receiveFromWeb3qFunc, Web3qChainConf.chainId, manager.wg)
-	ef := func(c *EthChainRelayer, value interface{}, task *SubmitTxTask) error {
-		log := value.(*types.Log)
+	task := NewSubmitTxTask(Web3qChainConf.bridgeAddr, Web3qBridgeContract, receiveFromEthFunc, EthereumChainConf.chainId, Web3qChainConf.chainId, manager.wg)
+	ef := func(source *EthChainRelayer, target *EthChainRelayer, value interface{}, task *SubmitTxTask) (*types.Transaction, error) {
+		logData := value.(*types.Log)
 
-		expectBN := log.BlockNumber + CONFIRMS
+		sourceExpectBN := logData.BlockNumber + CONFIRMS
+		retryNonce := 0
 		for {
-			latestBN := c.latestHeaderNum.Uint64()
-			if latestBN > expectBN {
-				tx, err := c.GenTx(task, log.TxHash, log.Index)
+			sourceLatestBN := source.latestHeaderNum.Uint64()
+			log.Info("submit-task submitting tx:: waiting enough confirms", "current-block", sourceLatestBN, "expect-block", sourceExpectBN)
+			if sourceLatestBN >= sourceExpectBN {
+				tx, err := target.GenTx(task, logData.TxHash, big.NewInt(0))
 				if err != nil {
-					return err
+					log.Error("submit-task submitting tx:: generate tx err ", "submit-task", task.Name(), "targetChain", task.TargetChainId())
+					return tx, err
 				}
-				err = c.SubmitTx(tx)
-				return nil
+				err = target.SubmitTx(tx)
+				if err != nil && retryNonce <= RetryTimes {
+					log.Error("submit-task submitting tx:: happen error and retrying", "submit-task", task.Name(), "targetChain", task.TargetChainId())
+					retryNonce++
+					continue
+				}
+
+				return tx, err
 			}
 
-			var ss int64 = int64((expectBN - latestBN) * BlockInternalSecond)
-			var totalTime int64 = ss * time.Second.Nanoseconds()
-			time.Sleep(time.Duration(totalTime))
+			//var ss int = int(sourceExpectBN-sourceLatestBN) * BlockInternalSecond
+			time.Sleep(BlockInternalSecond * time.Second)
 		}
 
 	}

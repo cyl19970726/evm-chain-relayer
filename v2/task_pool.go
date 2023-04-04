@@ -1,7 +1,8 @@
 package v2
 
 type Task interface {
-	Name() uint
+	Type() uint32
+	Name() string
 	TargetChainId() uint64
 	Status() uint32
 }

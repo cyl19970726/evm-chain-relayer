@@ -18,6 +18,7 @@ const (
 )
 
 type IMonitorTask interface {
+	Type() uint32
 	Name() string
 	Status() uint32
 	TargetChainId() uint64
@@ -33,7 +34,7 @@ type MonitorTask struct {
 	eventName     string
 	eventId       common.Hash
 
-	sendDataCh chan *types.Log
+	sendDataCh chan interface{}
 
 	MonitorFunc func(c IChainRelayer) (err error)
 	recCh       chan types.Log
@@ -60,7 +61,7 @@ func NewMonitorEventTask(pwg sync.WaitGroup, targetChainId uint64, contractAddr 
 	}
 }
 
-func (task *MonitorTask) SubscribeData(sendDataCh chan *types.Log) error {
+func (task *MonitorTask) SubscribeData(sendDataCh chan interface{}) error {
 	if task.sendDataCh != nil {
 		return fmt.Errorf("%s MonitorTask has been subscribed", task.Name())
 	}
@@ -68,6 +69,9 @@ func (task *MonitorTask) SubscribeData(sendDataCh chan *types.Log) error {
 	return nil
 }
 
+func (task *MonitorTask) Type() uint32 {
+	return MonitorTaskType
+}
 func (task *MonitorTask) Name() string {
 	return "MonitorTask"
 }
@@ -105,7 +109,7 @@ func (task *MonitorTask) monitoring() {
 		log.Error("monitoring with invalid status", "task-status", atomic.LoadUint32(&task.status), "chainId", task.TargetChainId(), "contract", task.contractAddr, "event", task.eventName)
 	}
 
-	log.Info("MonitorTask::Monitoring() running the monitor-contract-event task", "chainId", task.TargetChainId(), "contract", task.contractAddr, "event", task.eventName)
+	log.Info("MonitorTask::Monitoring() running the monitor-contract-event task", "chainId", task.TargetChainId(), "contract", task.contractAddr, "event", task.eventName, "eventId", task.eventId.Hex())
 
 	for {
 		select {
@@ -158,6 +162,9 @@ func (task *MonitorTask) SetStatus(newStatus uint32) {
 
 func (manager *TaskManager) GenMonitorEventTask(targetChainId uint64, address common.Address, eventName string) *MonitorTask {
 	eventId := GlobalContractInfo.GetContractEventId(targetChainId, address, eventName)
+	if len(eventId) == 0 {
+		panic(eventId)
+	}
 	// todo: how to judge the eventId validity
 	task := NewMonitorEventTask(manager.wg, targetChainId, address, eventName, eventId)
 	ef := func(c IChainRelayer) (err error) {

@@ -9,7 +9,9 @@ func main() {
 	// 1. Monitor Subscription
 	go v2.GlobalCoordinator.Start()
 
-	time.Sleep(500 * time.Second)
+	time.Sleep(1000 * time.Second)
+
+	v2.GlobalCoordinator.Stop()
 	//fmt.Println("Listening")
 	//v2.GlobalCoordinator.Stop()
 }

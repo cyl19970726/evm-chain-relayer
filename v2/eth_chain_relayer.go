@@ -1,7 +1,6 @@
 package v2
 
 import (
-	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"errors"
@@ -15,7 +14,6 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb/leveldb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/rlp"
 	"io/ioutil"
 	"math/big"
 	"sync/atomic"
@@ -61,7 +59,7 @@ func NewEthChainRelayer(pctx context.Context, filepath string, passwd string, co
 		return nil, err
 	}
 
-	database, err := leveldb.New("./multichain-relayers-db", 16, 16, fmt.Sprintf("./relayer-%d", conf.chainId), false)
+	database, err := leveldb.New(conf.leveldbDir, 16, 16, fmt.Sprintf("./relayer-%d", conf.chainId), false)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +72,7 @@ func NewEthChainRelayer(pctx context.Context, filepath string, passwd string, co
 		chainClient:      chainClient,
 		ctx:              ctx,
 		cancel:           cf,
-		status:           0,
+		status:           ChainRelayerNoStart,
 		recMonitorTaskCh: make(chan IMonitorTask),
 		recExecTaskCh:    make(chan Task),
 	}
@@ -171,8 +169,8 @@ func (c *EthChainRelayer) estimateGas(tx *types.DynamicFeeTx) (uint64, error) {
 }
 
 func (c *EthChainRelayer) GenTx(task *SubmitTxTask, args ...interface{}) (*types.Transaction, error) {
-	abi := GlobalContractInfo.GetContractAbi(c.ChainId(), task.contractAddr)
-	txdata, err := abi.Pack(task.methodName, args)
+	abi := GlobalContractsCfg.GetContractAbi(task.contractName)
+	txdata, err := abi.Pack(task.methodName, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -295,6 +293,16 @@ func (c *EthChainRelayer) CallContract(contractName string, methodName string, a
 	return res, nil
 }
 
+func (c *EthChainRelayer) getNextEpochHeader() (*big.Int, error) {
+	res, err := c.CallContract(LightClientContract, GetNextEpochHeightFunc)
+	if err != nil {
+		return nil, err
+	}
+
+	height := big.NewInt(0).SetBytes(res)
+	return height, nil
+}
+
 func (c *EthChainRelayer) IsW3qHeaderExistAtLightClient(web3qHeadrNumber *big.Int) (bool, error) {
 
 	res, err := c.CallContract(LightClientContract, BlockExistFunc, web3qHeadrNumber)
@@ -348,10 +356,10 @@ func (c *EthChainRelayer) Start() error {
 	atomic.StoreUint32(&c.status, ChainRelayerDoing)
 
 	log.Info("ChainRelayer::Start() ChainRelayer start succeed", "chainId", c.ChainId())
-	return c.Running()
+	return c.running()
 }
 
-func (c *EthChainRelayer) Running() error {
+func (c *EthChainRelayer) running() error {
 	if atomic.LoadUint32(&c.status) != ChainRelayerDoing {
 		return fmt.Errorf("EthChainRelayer::Running() with invalid status [%d]", atomic.LoadUint32(&c.status))
 	}
@@ -372,42 +380,42 @@ func (c *EthChainRelayer) Running() error {
 			// todo : It seems that move the task.StartMonitor() to taskManager is a better way
 			go task.StartMonitor()
 
-		case header := <-c.chainHeadCh:
-			// store latest 100 header at stateDB
-			log.Info("EthChainRelayer::Running get header from subscription", "chainId", c.ChainId(), "headerNum", header.Number.Uint64())
-			buffer := new(bytes.Buffer)
-			err := rlp.Encode(buffer, header)
-			if err != nil {
-				log.Error("EthChainRelayer::Running() failed to rlp-encoding header", "chainId", c.ChainId(), "headerNum", header.Number.Uint64(), "err", err.Error())
-				// todo : take a better dealing mechanism for this case
-				continue
-			}
-
-			// todo : it seems that should consider the case fork choice happened
-			//get, err := c.relayerdb.Get(header.Number.Bytes())
-			//if get != nil {
-			//	continue
-			//}
-
-			err = c.relayerdb.Put(header.Number.Bytes(), buffer.Bytes())
-			if err != nil {
-				log.Error("ChainRelayer::Running() failed to put header into relayerDb", "chainId", c.ChainId(), "headerNum", header.Number.Uint64(), "err", err.Error())
-				// todo : take a better dealing mechanism for this case
-				continue
-			}
-			c.latestHeaderNum = header.Number
-
-		case herr := <-c.chainHeadSub.Err():
-			log.Error("EthChainRelayer::Running() the latest header subscription happened error", "chainId", c.ChainId(), "err", herr.Error())
-			c.chainHeadSub.Unsubscribe()
-
-			sub, receiveHeaderChan, err := c.SubscribeLatestHeader()
-			if err != nil {
-				log.Error("EthChainRelayer::Running() failed to resubscribe the latestHeader , prepare to quit the EthChainRelayer ", "chainId", c.ChainId(), "err", herr.Error())
-				c.Stop()
-			}
-			c.chainHeadSub = sub
-			c.chainHeadCh = receiveHeaderChan
+		//case header := <-c.chainHeadCh:
+		//	// store latest 100 header at stateDB
+		//	log.Info("EthChainRelayer::running() get header from subscription", "chainId", c.ChainId(), "headerNum", header.Number.Uint64())
+		//	buffer := new(bytes.Buffer)
+		//	err := rlp.Encode(buffer, header)
+		//	if err != nil {
+		//		log.Error("EthChainRelayer::running() failed to rlp-encoding header", "chainId", c.ChainId(), "headerNum", header.Number.Uint64(), "err", err.Error())
+		//		// todo : take a better dealing mechanism for this case
+		//		continue
+		//	}
+		//
+		//	// todo : it seems that should consider the case fork choice happened
+		//	//get, err := c.relayerdb.Get(header.Number.Bytes())
+		//	//if get != nil {
+		//	//	continue
+		//	//}
+		//
+		//	err = c.relayerdb.Put(header.Number.Bytes(), buffer.Bytes())
+		//	if err != nil {
+		//		log.Error("ChainRelayer::Running() failed to put header into relayerDb", "chainId", c.ChainId(), "headerNum", header.Number.Uint64(), "err", err.Error())
+		//		// todo : take a better dealing mechanism for this case
+		//		continue
+		//	}
+		//	c.latestHeaderNum = header.Number
+		//
+		//case herr := <-c.chainHeadSub.Err():
+		//	log.Error("EthChainRelayer::Running() the latest header subscription happened error", "chainId", c.ChainId(), "err", herr.Error())
+		//	c.chainHeadSub.Unsubscribe()
+		//
+		//	sub, receiveHeaderChan, err := c.SubscribeLatestHeader()
+		//	if err != nil {
+		//		log.Error("EthChainRelayer::Running() failed to resubscribe the latestHeader , prepare to quit the EthChainRelayer ", "chainId", c.ChainId(), "err", herr.Error())
+		//		c.Stop()
+		//	}
+		//	c.chainHeadSub = sub
+		//	c.chainHeadCh = receiveHeaderChan
 
 		case <-c.ctx.Done():
 			log.Info("EthChainRelayer::Running() EthChainRelayer receive stop-signal and will be done ", "chainId", c.ChainId())

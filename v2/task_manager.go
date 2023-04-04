@@ -16,9 +16,10 @@ const (
 )
 
 const (
-	MonitorTaskType = 0
-	SubmitTxTaskType
-	ScheduleTaskType
+	MonitorTaskType       = 0
+	MonitorHeaderTaskType = 1
+	SubmitTxTaskType      = 2
+	ScheduleTaskType      = 3
 )
 
 // send task to
@@ -56,12 +57,12 @@ func (manager *TaskManager) running() error {
 	}
 
 	for _, stask := range manager.scheduleQueue {
-		go func() {
+		go func(t *ScheduleTask) {
 			err := stask.Start()
 			if err != nil {
 				panic(err)
 			}
-		}()
+		}(stask)
 	}
 
 	for _, mtask := range manager.monitorQueue {
@@ -73,12 +74,12 @@ func (manager *TaskManager) running() error {
 	}
 
 	for _, ttask := range manager.txQueue {
-		go func() {
-			err := ttask.Start()
+		go func(t *SubmitTxTask) {
+			err := t.Start()
 			if err != nil {
 				panic(err)
 			}
-		}()
+		}(ttask)
 	}
 
 	for {

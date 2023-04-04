@@ -44,6 +44,10 @@ func (task *MonitorHeaderTask) SubscribeData(sendDataCh chan *types.Header) erro
 	return nil
 }
 
+func (task *MonitorHeaderTask) Type() uint32 {
+	return MonitorHeaderTaskType
+}
+
 func (task *MonitorHeaderTask) Name() string {
 	return "MonitorHeaderTask"
 }
@@ -70,7 +74,7 @@ func (task *MonitorHeaderTask) StartMonitor() error {
 
 	atomic.StoreUint32(&task.status, MonitorTaskMonitoring)
 
-	log.Info("MonitorHeaderTask::StartMonitor() succeed to start the monitor-contract-event task", "chainId", task.TargetChainId())
+	log.Info("MonitorHeaderTask::StartMonitor() succeed to start the monitor-header task", "chainId", task.TargetChainId())
 	task.Monitoring()
 	return nil
 }
@@ -81,26 +85,20 @@ func (task *MonitorHeaderTask) Monitoring() {
 		log.Error("monitoring with invalid status", "task-status", atomic.LoadUint32(&task.status), "chainId", task.TargetChainId())
 	}
 
-	//err := <-task.errCh
-	//if err != nil {
-	//	log.Error("MonitorHeaderTask::StartMonitor() monitor-contract-event task happened error", "chainId", task.TargetChainId(), , "err", err.Error())
-	//	return
-	//}
-
-	log.Info("MonitorHeaderTask::Monitoring() running the monitor-contract-event task", "chainId", task.TargetChainId())
+	log.Info("MonitorHeaderTask::Monitoring() running the monitor-header task", "chainId", task.TargetChainId())
 
 	for {
 		select {
 		case err := <-task.errCh:
 			if err != nil {
-				log.Error("MonitorHeaderTask::Monitoring() monitor-contract-event task happened error", "chainId", task.TargetChainId(), "err", err.Error())
+				log.Error("MonitorHeaderTask::Monitoring() monitor-header task happened error", "chainId", task.TargetChainId(), "err", err.Error())
 				// Todo : to confirm whether task.stop() has high probability of producing a panic when the task.sub is nil
 				task.Stop()
 			}
 		case data := <-task.recCh:
-			log.Info("MonitorHeaderTask::Monitoring() receive event log", "chainId", task.targetChainId)
+			log.Debug("MonitorHeaderTask::Monitoring() receive header", "chainId", task.targetChainId, "headerNum", data.Number.Uint64())
 			if task.sendDataCh != nil {
-				log.Info("MonitorHeaderTask::Monitoring() sending data to next processing program", "chainId", task.targetChainId)
+				log.Debug("MonitorHeaderTask::Monitoring() sending header to next processing program", "chainId", task.targetChainId, "headerNum", data.Number.Uint64())
 				task.sendDataCh <- data
 			}
 		case err := <-task.sub.Err():
